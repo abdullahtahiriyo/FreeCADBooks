@@ -1,0 +1,585 @@
+\documentclass[12pt,twoside,a4paper]{book}
+\usepackage[utf8]{inputenc}
+\usepackage{tikz}
+\usepackage{plantuml}
+\usetikzlibrary{shapes.geometric, arrows, backgrounds, fit, decorations.pathreplacing, mindmap,trees}
+\usepackage[shortlabels]{enumitem}
+\usepackage{listings}
+\usepackage{xcolor}
+
+\lstset { %
+    language=C++,
+    backgroundcolor=\color{black!5}, % set backgroundcolor
+    basicstyle=\ttfamily\scriptsize,% basic font setting
+    breaklines=true
+}
+
+\newcommand{\SketchObject}{\emph{SketchObject}}
+\newcommand{\Sketch}{\emph{Sketch}}
+\newcommand{\DrawSketchHandler}{\emph{DrawSketchHandler}}
+\newcommand{\ViewProviderSketch}{\emph{ViewProviderSketch}}
+\newcommand{\DefaultWidget}{\emph{Default Widget}}
+
+\newcommand{\DrawSketchDefaultHandler}{\emph{DrawSketchDefaultHandler}}
+\newcommand{\DrawSketchDefaultWidgetHandler}{\emph{DrawSketchDefaultWidgetHandler}}
+
+\newcommand{\textoverline}[1]{$\overline{\mbox{#1}}$}
+
+\newenvironment{tolerant}[1]{%
+  \par\tolerance=#1\relax
+}{%
+  \par
+}
+
+\newenvironment{dedication}
+  {\clearpage           % we want a new page
+   \thispagestyle{empty}% no header and footer
+   \vspace*{\stretch{1}}% some space at the top
+   \itshape             % the text is in italics
+   \raggedleft          % flush to the right margin
+  }
+  {\par % end the paragraph
+   \vspace{\stretch{3}} % space at bottom is three times that at the top
+   \clearpage           % finish off the page
+  }
+
+\usepackage[most]{tcolorbox}
+\definecolor{block-gray}{gray}{0.85}
+
+\newtcolorbox{codequote}{colback=block-gray,grow to right by=-10mm,grow to left by=-10mm,
+boxrule=0pt,boxsep=0pt,breakable}
+
+
+
+
+\title{FreeCAD Sketcher Extended DrawSketchHandler Architecture}
+\author{Abdullah Tahiri}
+\date{July 2022}
+
+
+\begin{document}
+    % Flow Chart nodes definitions and Styles
+    \tikzstyle{startstop} = [rectangle, rounded corners, minimum width=3cm, minimum height=1cm,text centered, draw=black, fill=red!30]
+
+    \tikzstyle{io} = [trapezium, trapezium left angle=70, trapezium right angle=110, minimum width=3cm, minimum height=1cm, text centered, draw=black, fill=blue!30]
+
+    %\tikzstyle{process} = [rectangle, minimum width=3cm, minimum height=1cm, text centered, draw=black, fill=orange!30]
+
+    \tikzstyle{process} = [rectangle, minimum width=3cm, minimum height=1cm, text centered, text width=3cm, draw=black, fill=orange!30]
+
+    \tikzstyle{decision} = [diamond, minimum width=3cm, minimum height=1cm, text centered, draw=black, fill=green!30]
+
+    \tikzstyle{surround} = [fill=blue!10,thick,draw=black,rounded corners=2mm]
+
+    \tikzstyle{arrow} = [thick,->,>=stealth]
+    % Tikz end
+
+    \frontmatter
+
+    \maketitle
+
+    \begin{dedication}
+        To the FreeCAD Community
+        \par   %% or a blank line
+        \vspace{2\baselineskip}
+        To Werner for reviewing tons of lines of code per year
+    \end{dedication}
+
+
+    \chapter{Preface}
+
+    The Sketcher has achieved a substantial level of maturity in FreeCAD. From a user point of view, a main line of future improvement, to increase the productivity and efficiency, is to improve existing tools, so as to achieve the same output with considerable less input.
+
+    From a developer point of view, it is important to able to produce more functionality with less code, leveraging a proven tested architecture.
+
+    Some user demands reasonably lead to increased code complexity, in which several different inputs need to be taken into account. There is a need to graciously handle such input in an uniform fashion.
+
+    The Extended DrawSketchHandler Architecture (EDSH Architecture) was designed with these needs in mind. The EDSH Architecture is not meant to substitute the basic DrawSketchHandler Architecture (DSH Architecture). It is perfectly valid to write a tool using the basic DSH architecture. Sometimes it may even be the right choice. However, there is a class of tools that will take advantage of using the EDSH Architecture instead.
+
+    One such class is when the new default tool widget is leveraged to enable a user to provide additional input during tool execution. The possibility to execute the tool only with the mouse, only with the keyboard by entering parameters, or any combination thereof, brings forward a substantial level of complexity, which the EDSH Architecture is designed to simplify in a uniform way.
+
+
+    \tableofcontents
+    \newpage
+
+    \mainmatter
+
+    \chapter{Basic DSH Architecture}
+
+    \section{DrawSketchHandler}
+    \label{sec:BasicDSHA:DrawSketchHandler}
+
+    A \DrawSketchHandler{} is nothing else than a delegate of \ViewProviderSketch{} specialised in handling interaction between the user and a tool. Generally speaking, a user executes one command to launch a tool. When the tool requires interaction with the user, it creates a \DrawSketchHandler{} and the \DrawSketchHandler{} takes care of the UI interaction from that moment.
+
+    \begin{figure}
+    \centering
+    \caption{ViewProviderSketch-DrawSketchHandler Delegation}
+        \begin{plantuml}
+        @startuml
+        skinparam componentStyle rectangle
+
+        [ViewProviderSketch] ..> [DrawSketchHandler] : delegate
+        [DrawSketchHandler] ..> [ViewProviderSketchDrawSketchHandlerAttorney] : friend
+        [ViewProviderSketchDrawSketchHandlerAttorney] ..> [ViewProviderSketch] : friend
+        @enduml
+        \end{plantuml}
+    \end{figure}
+
+   \begin{figure}
+    \centering
+    \caption{DrawSketchHandler relevant interface}
+        \begin{plantuml}
+        @startuml
+        class DrawSketchHandler {
+            void activate()
+            void deactivate()
+            ==
+            virtual void mouseMove()
+            virtual bool pressButton()
+            virtual bool releaseButton()
+            virtual void registerPressedKey()
+            ==
+            virtual void quit()
+            ==
+            virtual QString getCrosshairCursorSVGName()
+        }
+        @enduml
+        \end{plantuml}
+    \end{figure}
+
+    The \emph{ViewProviderSketchDrawSketchHandlerAttorney} defines an architecture barrier, limiting the extent to which \DrawSketchHandler{} can access protected facilities of \ViewProviderSketch{} necessary to execute the delegation (the so-called \emph{collaboration interface}). This has an important consequence, in that DrawSketchHandler derived classes cannot access that protected functionality of \ViewProviderSketch{}, either\footnote{As ``the friend of your friend is not your friend``, i.e. \DrawSketchHandler{} is the friend of the attorney, but not its inheritance}. Therefore, this design choice indirectly enforces that common protected functionality of ViewProviderSketch usable by DrawSketchHandler derived classes (aka \emph{collaboration interface}) is refactored up at \DrawSketchHandler{} level.
+
+    A non-exhaustive list of the \emph{collaboration interface} includes:
+
+    \begin{itemize}
+     \item Setting/Unsetting constraint selectability.
+     \item Displaying text in the Coin view at given coordinates.
+     \item Drawing a curve defined by a vector of 2D coordinates in the edit layer of Coin.
+     \item Drawing markers at given 2D coordinates in the edit layer of Coin.
+     \item Programatically moving the pointer to a given position.
+     \item Pre-selecting an element at a given 2D coordinates.
+     \item Retrieving the current pre-selection.
+    \end{itemize}
+
+    \ViewProviderSketch{} is designed to interact with a \DrawSketchHandler{} derived class. Aside from handler activation/deactivation, \ViewProviderSketch{} provides \DrawSketchHandler{} with the mouse movements, any pressed and released mouse buttons, as well as any keystroke received from the keyboard.
+
+    The parent \DrawSketchHandler{} class is \emph{exclusively} responsible for setting and unsetting tool specific cursors. Derived classes can indicate the icon to be used by overriding \emph{getCrosshairCursorSVGName}.
+
+    Functionalities offered by \DrawSketchHandler{} to its derived classes are discussed below.
+
+    \section{Basic DrawSketchHandler implementation}
+    \label{sec:BasicDSHA:Implementation}
+
+    A basic \DrawSketchHandler{} generally comprises a custom state machine (SelectMode). Depending on the state, and reacting to mouse movement, it may store the coordinates of clicked positions, search for autoconstraints at the clicked position, and draw a temporal curve (or markers). Generally, mouse clicks result in changing the state of the state machine, and thus reacting differently to changes in mouse coordinates. Eventually, the state machine will reach the final state, and interpreter will be sent the Python commands necessary to cause the wanted action of the tool.
+
+    The basic \DrawSketchHandler{} implementation provides virtually unconstrained flexibility, which can adapt to a full range of different tools. The interface is also reasonably simple, with a not so step learning curve, and full of room to exercise creativity. However, this flexilibity inherently leads to different handlers based on this architecture achieving its goals in different fashions, even when a unified approach would be warranted (and appropriate and desired). Often it leads to code repetition over different DSHs.
+
+    The following is an example of a simple DSH coded following this architecture:
+
+    \begin{lstlisting}
+class DrawSketchHandlerLine: public DrawSketchHandler
+{
+public:
+    DrawSketchHandlerLine():Mode(STATUS_SEEK_First),
+                            EditCurve(2){}
+    virtual ~DrawSketchHandlerLine(){}
+    /// mode table
+    enum SelectMode {
+        STATUS_SEEK_First,      /**< enum value ----. */
+        STATUS_SEEK_Second,     /**< enum value ----. */
+        STATUS_End
+    };
+
+    virtual void mouseMove(Base::Vector2d onSketchPos) override
+    {
+        if (Mode==STATUS_SEEK_First) {
+            setPositionText(onSketchPos);
+            if (seekAutoConstraint(sugConstr1, onSketchPos, Base::Vector2d(0.f,0.f))) {
+                renderSuggestConstraintsCursor(sugConstr1);
+                return;
+            }
+        }
+        else if (Mode==STATUS_SEEK_Second){
+            float length = (onSketchPos - EditCurve[0]).Length();
+            float angle = (onSketchPos - EditCurve[0]).GetAngle(Base::Vector2d(1.f,0.f));
+            SbString text;
+            text.sprintf(" (%.1f,%.1fdeg)", length, angle * 180 / M_PI);
+            setPositionText(onSketchPos, text);
+
+            EditCurve[1] = onSketchPos;
+            drawEdit(EditCurve);
+            if (seekAutoConstraint(sugConstr2, onSketchPos, onSketchPos - EditCurve[0])) {
+                renderSuggestConstraintsCursor(sugConstr2);
+                return;
+            }
+        }
+        applyCursor();
+    }
+
+    virtual bool pressButton(Base::Vector2d onSketchPos) override
+    {
+        if (Mode==STATUS_SEEK_First){
+            EditCurve[0] = onSketchPos;
+
+            Mode = STATUS_SEEK_Second;
+        }
+        else {
+            EditCurve[1] = onSketchPos;
+            drawEdit(EditCurve);
+            Mode = STATUS_End;
+        }
+        return true;
+    }
+
+    virtual bool releaseButton(Base::Vector2d onSketchPos) override
+    {
+        Q_UNUSED(onSketchPos);
+        if (Mode==STATUS_End){
+            unsetCursor();
+            resetPositionText();
+
+            try {
+                Gui::Command::openCommand(QT_TRANSLATE_NOOP("Command", "Add sketch line"));
+                Gui::cmdAppObjectArgs(sketchgui->getObject(), "addGeometry(Part.LineSegment(App.Vector(%f,%f,0),App.Vector(%f,%f,0)),%s)",
+                          EditCurve[0].x,EditCurve[0].y,EditCurve[1].x,EditCurve[1].y,
+                          geometryCreationMode==Construction?"True":"False");
+
+                Gui::Command::commitCommand();
+            }
+            catch (const Base::Exception& e) {
+                Base::Console().Error("Failed to add line: %s\n", e.what());
+                Gui::Command::abortCommand();
+            }
+
+            ParameterGrp::handle hGrp = App::GetApplication().GetParameterGroupByPath("User parameter:BaseApp/Preferences/Mod/Sketcher");
+            bool avoidredundant = sketchgui->AvoidRedundant.getValue()  && sketchgui->Autoconstraints.getValue();
+
+            if(avoidredundant)
+                removeRedundantHorizontalVertical(static_cast<Sketcher::SketchObject *>(sketchgui->getObject()),sugConstr1,sugConstr2);
+
+            // add auto constraints for the line segment start
+            if (!sugConstr1.empty()) {
+                createAutoConstraints(sugConstr1, getHighestCurveIndex(), Sketcher::PointPos::start);
+                sugConstr1.clear();
+            }
+
+            // add auto constraints for the line segment end
+            if (!sugConstr2.empty()) {
+                createAutoConstraints(sugConstr2, getHighestCurveIndex(), Sketcher::PointPos::end);
+                sugConstr2.clear();
+            }
+
+            tryAutoRecomputeIfNotSolve(static_cast<Sketcher::SketchObject *>(sketchgui->getObject()));
+
+            EditCurve.clear();
+            drawEdit(EditCurve);
+
+            bool continuousMode = hGrp->GetBool("ContinuousCreationMode",true);
+            if(continuousMode){
+                // This code enables the continuous creation mode.
+                Mode=STATUS_SEEK_First;
+                EditCurve.resize(2);
+                applyCursor();
+                /* It is ok not to call to purgeHandler
+                * in continuous creation mode because the
+                * handler is destroyed by the quit() method on pressing the
+                * right button of the mouse */
+            }
+            else{
+                sketchgui->purgeHandler(); // no code after this line, Handler get deleted in ViewProvider
+            }
+        }
+        return true;
+    }
+
+private:
+
+    virtual QString getCrosshairCursorSVGName() const override
+    {
+        return QString::fromLatin1("Sketcher_Pointer_Create_Line");
+    }
+
+protected:
+    SelectMode Mode;
+    std::vector<Base::Vector2d> EditCurve;
+    std::vector<AutoConstraint> sugConstr1, sugConstr2;
+};
+    \end{lstlisting}
+
+    Many of these simple DSHs use a vector EditCurve with two different intentions: (a) to store the temporal curve to be shown in the 3D view, and (b) to store the coordinates entered by the user during the tool execution. While for very simple DSHs this may seem convenient, as the geometry (or the functionality of the tool) gets more complex, it becomes more and more difficult to produce code showing intention, as specific information is in a vector position without a name associated to it. It is not unheard that bugs arise from unintentionally overwriting user entered information while trying to redraw. Overall, this approach fails to make explicit the intention of the code and is discouraged.
+
+    A simple solution to this issue is to create different variables for storing user input and drawing. The intention of the code is much more important that optimisation\footnote{Yes. I can vehemently acknowledge that we are not optimizing memory usage, but we are definitely not coding for an 8 bit microcontroller either. Optimisation over code intention has no place in software intended to run in a regular computer.}.
+
+    Three functions of \DrawSketchHandler{} provide a basic framework to detect autoconstraints, render the suggestions for the user, and create them afterwards: \emph{seekAutoConstraint}, \emph{renderSuggestConstraintsCursor} and \emph{createAutoConstraints}.
+
+    \chapter{User input and tool evolution}
+
+    \section{Early availability of input data}
+
+    There is so much a tool can do with a given set of input information. Availability of input data at a certain point limits the potential of evolution of a tool. In other words, enabling a user to provide information about his or her intentions early can be leveraged into a better tool. From a different perspective, enabling a tool to extract as much early information as possible from a user has the potential for an increase in productivity.
+
+    A simple example to illustrate the point could be the creation of a centered round corner rectangle. A user knows that he or she wants to have such rectangle of overall dimensions 10 mm and 5 mm, the radius of the rounded corner being 2 mm. An unoptimised approach may entail: (1) Creating a rectangle of random size, (2) making rounded corners with a fillet tool, (3) making the arcs of the fillets equal, (4) applying a symmetry constraint to center the rectangle, (5) selecting appropriate points to enter a vertical dimension, (6) idem for a horizontal dimension. It is not difficult to see the potential for a productivity increase if all these information were available at the first stage of the process.
+
+    One approach to improve the aforementioned illustrative example is to create a lot of specialised tools and letting the user select one tool or the other. This has been used in the past for some tools, and indeed, leads to a reduction in the number of steps.
+
+    In practice, part of the information is stored in the command itself (i.e. create a rounded rectangle) and the user merely selects the most appropriate tool. However, this approach is still inherently limited to information that can be reasonably coded in a command definition. For example, it is not reasonable to create commands for any combination of real values of dimensional constraints.
+
+    The drive to reduce the number of steps to increase productivity focuses thus must necessarily involve getting early not only which specialisation of a tool to use, but which parameters should constraint it behaviour.
+
+    \section{Flexibility of sets of input data}
+
+    While it is clear that having early complete information can be an important drive for tool evolution, early complete information from the user must not be a requisite. It may be that the user does not know exactly what he or she is seeking. In such cases, enforcing early complete information would only get in the middle. The user will have to enter dimensioning he is not sure about and then, possibly delete it or modify it. That would not be efficient either.
+
+    An increased degree of early information completeness is only as good as the ability of the tool to work with any degree of available information. This flexibility requires that a tool can produce an outcome using different levels of information completeness. In other words, while the tool may provide a way to define every single parameter in one step, it may still allow to construct a fully unconstrained geometry (as in legacy tools).
+
+    As it will be seen below, this flexibility is an important source of complexity in coding a tool.
+
+    \section{Combination of sets of information}
+
+    A widget is the most obvious manner to input parameters. Combination of parameter input with mouse input in disregard of the rest of a sketch is feasible\footnote{A first approach of how a tool could combine mouse input and input of parameter through the keyboard (in a widget) in FreeCAD's Sketcher is due to community user PaddleStroke.}. Combination of parameter input with mouse input in full awareness of the rest of the sketch requires a substantial level of solver support to make a tool ready for production\footnote{In absence of this support, the workflow is constantly interrupted by redundant and/or conflicting constraints. Benefits may not outweight the drawbacks.}.
+
+    The Extended DrawsketchHandler Architecture (EDSH Architecture) seeks to provide an integrated solution to make this combination of sets of information manageable and consistent throughout a typical range of tools.
+
+    \chapter{The Tool Widget}
+
+    \section{Architecture}
+
+    A \DrawSketchHandler{} is associated with a specific widget. The relationship does not need be unique, but different handlers may (theoretically) make use of a same widget.
+
+   \begin{figure}
+    \centering
+    \caption{Tool Widget Architecture}
+        \begin{plantuml}
+        @startuml
+
+        class ViewProviderSketch{
+            - signalToolChanged : string
+            - slotToolWidgetChanged() : QWidget
+        }
+
+        class TaskDlgEditSketch {
+            - slotToolChanged() : string
+        }
+
+        class TaskSketcherTool{
+            + toolChanged() : string
+            - std::unique_ptr<QWidget> widget
+            - signalToolWidgetChanged() : QWidget
+        }
+
+        class ViewProviderSketchDrawSketchHandlerAttorney {
+            - signalToolChanged: string
+        }
+
+        class DrawSketchHandler{
+            - void toolWidgetChanged : QWidget
+            - signalToolChanged()
+            - virtual std::string getToolName() const;
+            - QWidget * toolwidget;
+        }
+
+        TaskDlgEditSketch *-- TaskSketcherTool
+
+        ViewProviderSketch *-- DrawSketchHandler
+
+        ViewProviderSketch --> TaskDlgEditSketch
+
+        TaskDlgEditSketch::slotToolChanged --> TaskSketcherTool::toolChanged : string
+
+        ViewProviderSketch::slotToolWidgetChanged --> DrawSketchHandler::toolWidgetChanged : QWidget
+
+        ViewProviderSketch::signalToolChanged --> TaskDlgEditSketch::slotToolChanged : string
+
+        DrawSketchHandler::signalToolChanged --> ViewProviderSketchDrawSketchHandlerAttorney::signalToolChanged : string
+
+        ViewProviderSketchDrawSketchHandlerAttorney::signalToolChanged --> ViewProviderSketch::signalToolChanged : string
+
+        TaskSketcherTool::signalToolWidgetChanged --> ViewProviderSketch::slotToolWidgetChanged : QWidget
+
+        @enduml
+        \end{plantuml}
+    \end{figure}
+
+    In order to break down complexity and avoid unnecessary couplings, a \DrawSketchHandler{} is associated with a string, the \emph{toolname}. The \emph{toolname} is provided by overloading the \emph{getToolName()} function of \DrawSketchHandler{}. Other than by providing this string, a class deriving from \DrawSketchHandler{} is not involved at all in the creation of the widget. The widget appears already created in \DrawSketchHandler{}.
+
+    The basis of the mechanism allowing this involves a handshake signaling between \DrawSketchHandler{} and the class containing the widget (currently \emph{TaskSketcherTool}). The activation of a \emph{DrawSketchHandler} causes the \emph{toolname} string to be notified to \emph{TaskSketcherTool}. \emph{TaskSketcherTool} relies on a widget factory to create the appropriate type of widget from the provided string. A pointer to the created widget is then signaled back to \emph{DrawSketchHandler}.
+
+    The ownership of the actual widget belongs to the widget container (at present, \emph{TaskSketcherTool}), which determines its lifetime. The creation and destruction of the widget, follows the notification to \emph{TaskSketcherTool} that a tool with the given \emph{toolname} is active, or the change to no tool at all. The signaling of the \emph{toolname} (or not tool at all) is determined by the activation/deactivation of the \DrawSketchHandler{}. Therefore, indirectly the lifetime of the widget is linked to the time a tool is active.
+
+    \ViewProviderSketch{} is the class creating the TaskBox in sketcher edit mode (and then delegates on it). Similarly, \ViewProviderSketch{} is the class delegating on the \DrawSketchHandler{}. \ViewProviderSketch{} is also responsible for the lifetime of those clases. Levering \ViewProviderSketch{} for this signaling, together with the use of generic types (std::string, QWidget) allows to keep loose coupling between these classes.
+
+    The use of a factory to determine the widget type enables to keep all the knowledge about the coupling of DSH type and widget type within the DSH.
+
+    \section{The Default Widget}
+
+    While enabling any \DrawSketchHandler{} to use a custom widget provides substantial flexibility, it is not difficult to see that this will result in a substantial amount of code per \DrawSketchHandler{} making use of it. In fact, the requirements of many tools can be satisfied by some editboxes to enter parameters, a couple of checkboxes and maybe some comboboxes. The funcionality for entering parameters (restricting to value when edited), is desirable to be the same for most tools, to provide uniformity.
+
+    For this reason, a widget known as \emph{Default Widget}\footnote{The full class name is SketcherToolDefaultWidget}, is provided. At the moment of writting, it provides up to ten controls to input parameter values, up to four checkboxes and three comboboxes. It features a remote configuration functionality, enabling a \DrawSketchHandler{} to show the right amount of controls for each tool, and configure each control, from labels to tooltips. Changes to controls are signaled via boost signals, to which the \DrawSketchHandler{} making use of the widget needs to subscribe.
+
+    The \DefaultWidget{} is configured to hold the focus of parameter input controls, so that direct numerical keyboard input is used to set the controls. A nested class \emph{KeyboardManager} controls how keystrokes are handled. The widget redirects to FreeCAD any keystroke it receives, until a keystroke from a list is received. This list currently consists of any digit, enter, return, tab, backtab, backspace, delete, minus, period and comma. Then, for a predetermined time from the last keystroke from the list, the widget will consume all keystrokes. This enables, for example, to enter letters in the widget for the units. When the predetermined time lapses, it returns to redirect any character not in the list to FreeCAD. This mechanism enables to reasonably keep all shortcut functionality of the Sketcher while in tool execution, while allowing convenient user input to the controls.
+
+    \chapter{The Extended DrawSketchHandler}
+
+    \section{Architecture}
+
+    The Extended DrawSketchHandler Architecture consists mainly in two template classes \DrawSketchDefaultHandler{} and \DrawSketchDefaultWidgetHandler{}.
+
+ \begin{figure}
+    \centering
+    \caption{Extended DrawSketchHandler Architecture}
+        \begin{plantuml}
+        @startuml
+
+        class DrawSketchHandler{
+        }
+
+        class "DrawSketchDefaultHandler<...>" as DrawSketchDefaultHandler_t
+
+        class "DrawSketchDefaultWidgetHandler<...>" as DrawSketchDefaultWidgetHandler_t
+
+        class "ToolWidgetManager"
+
+        DrawSketchHandler <|.. DrawSketchDefaultHandler_t
+
+        DrawSketchDefaultHandler_t <|.. DrawSketchDefaultWidgetHandler_t
+
+        DrawSketchDefaultWidgetHandler_t +-- ToolWidgetManager
+
+        @enduml
+        \end{plantuml}
+    \end{figure}
+
+    \DrawSketchDefaultHandler{} derives from \DrawSketchHandler{}. It is intended to enable automation of certain aspects of the management of the state machine and construction mode. It also provides support for different drawing methods, as well as management and creation through python of geometry and constraints.
+
+    \DrawSketchDefaultWidgetHandler{} derives from \DrawSketchDefaultHandler{}. It provides a nested class ToolWidgetManager configured to interact with the \DefaultWidget. It builds on top of the functionality provided by its parent to allows multiple input from the widget and mouse to operate synergistically.
+
+    \section{DrawSketchDefaultHandler}
+
+    At the moment there is no DSH using directly \DrawSketchDefaultHandler{}. The reason is that all DSHs indirectly using \DrawSketchDefaultHandler{} do use the \DefaultWidget{} and thus use DrawSketchDefaultWidgetHandler instead.
+
+    \DrawSketchDefaultHandler{} is heavily templatised and therefore it may look scary at first. However, it is actually quite straighforward to use once some basic principles are understood\footnote{Although just looking at the implemented examples renders it easy to use.}.
+
+    \begin{lstlisting}
+    template < typename HandlerT,        // The DSH Type
+            typename SelectModeT,        // The state machine
+            int PInitEditCurveSize,      // The initial size of the EditCurve
+            int PInitAutoConstraintSize, // The initial size of the AutoConstraint>
+            typename ConstructionMethodT = ConstructionMethods::DefaultConstructionMethod >
+    class DrawSketchDefaultHandler: public DrawSketchHandler, public StateMachine<SelectModeT>, public ConstructionMethodMachine<ConstructionMethodT>    {...}
+    \end{lstlisting}
+
+    The template class is actually intended to be derived from. The first template parameter is the class type deriving from the template\footnote{This may remind to the Curiously Recurring Template Pattern, but it is not it.}. In fact the main objective is make the instantiation of the template unique for each DSH.
+
+    The second parameter is a user provided StateMachine struct type, which is used to navigate the different states. The only limitation this StateMachine has is that the last state named End.
+
+    The third parameter is an integer indicating the initial size of the EditCurve structure. EditCurve is a vector of 2D coordinates which is used in most basic DSHs for drawing. It is not necessary to use it and it is only there for when a developer wants to use it. In fact, as will be shown below, the class offers new exciting possibilities to handle drawing and geometry creation in a unified way, which do not make use of this legacy convenience support.
+
+    The fourth parameter indicates the size of the AutoConstraint vector. Many DSHs detect and suggest autoconstraints. As in the case of the previous parameter, it is there to support the developer in case he or she wants to use it. It is not mandatory to use it.
+
+    The fifth parameter is a type defining different construction modes. It is similar to the StateMachine in terms of the only limitation it must fulfil, i.e. the last element must be End. Many DSHs have different construction modes. This provides support for automating the change from one construction mode to another.
+
+    After the discussion, maybe the template declaration may not be that scary anymore.
+
+    Rather than going through all the funcionality offered in the class, which can be done by reading the code directly, we will discuss the class from the point of view of its relation with the public virtual interface of \DrawSketchHandler{} (which defines the basic DrawSketchHandler Architecture), and then we will briefly discuss the advanced drawing, command generation and solver support it offers.
+
+    \subsection{Mapping to the DrawSketchHandler interface}
+
+    The accompanying figure offers a view of the inner workings of \DrawSketchDefaultHandler{} when interacting with \ViewProviderSketch{} using the \DrawSketchHandler{} basic interface, using a message sequence chart.
+
+    \begin{figure}
+    \centering
+    \caption{DrawSketchDefaultHandler to DrawSketchHandler interface mapping}
+        \begin{plantuml}
+        @startuml
+        participant ViewProviderSketch #lightgreen
+        box 'Extended DSH Architecture'
+        participant DrawSketchDefaultHandler #orangered
+        participant StateMachine
+        participant ConstructionMethodMachine
+        participant DrawSketchHandler
+        end box
+
+        ViewProviderSketch -[#green]> DrawSketchDefaultHandler : **mouseMove** (onSketchPos)
+        activate DrawSketchDefaultHandler #lavender
+        DrawSketchDefaultHandler -> DrawSketchDefaultHandler : updateDataAndDrawToPosition (onSketchPos)
+        activate DrawSketchDefaultHandler #lightgreen
+        deactivate
+        deactivate
+
+        ViewProviderSketch -[#green]> DrawSketchDefaultHandler : **pressButton** (onSketchPos)
+        activate DrawSketchDefaultHandler #lavender
+        DrawSketchDefaultHandler -> DrawSketchDefaultHandler : onButtonPressed (onSketchPos)
+        activate DrawSketchDefaultHandler #lightgreen
+        DrawSketchDefaultHandler -> DrawSketchDefaultHandler : updateDataAndDrawToPosition (onSketchPos)
+        activate DrawSketchDefaultHandler #darkblue
+        deactivate
+        DrawSketchDefaultHandler -> StateMachine : moveToNextMode ()
+        activate StateMachine
+        StateMachine -> DrawSketchDefaultHandler : onModeChanged ()
+        activate DrawSketchDefaultHandler #darkblue
+        deactivate
+        deactivate
+        deactivate
+        deactivate
+
+        ViewProviderSketch -[#green]> DrawSketchDefaultHandler : **releaseButton** (onSketchPos)
+        activate DrawSketchDefaultHandler #lavender
+        DrawSketchDefaultHandler -> DrawSketchDefaultHandler : finish ()
+        activate DrawSketchDefaultHandler #lightgreen
+        alt#Gold #LightBlue if state is End
+        DrawSketchDefaultHandler -> DrawSketchHandler : unsetCursor ()
+        activate DrawSketchHandler
+        deactivate
+        DrawSketchDefaultHandler -> DrawSketchHandler : resetPositionText ()
+        activate DrawSketchHandler
+        deactivate
+        DrawSketchDefaultHandler -> DrawSketchDefaultHandler : executeCommands ()
+        activate DrawSketchDefaultHandler #darkblue
+        deactivate
+        DrawSketchDefaultHandler -> DrawSketchDefaultHandler : generateAutoConstraints ()
+        activate DrawSketchDefaultHandler #darkblue
+        deactivate
+        DrawSketchDefaultHandler -> DrawSketchDefaultHandler : beforeCreateAutoConstraints ()
+        activate DrawSketchDefaultHandler #darkblue
+        deactivate
+        DrawSketchDefaultHandler -> DrawSketchDefaultHandler : createAutoConstraints ()
+        activate DrawSketchDefaultHandler #darkblue
+        deactivate
+        DrawSketchDefaultHandler -> DrawSketchDefaultHandler : handleContinuousMode ()
+        activate DrawSketchDefaultHandler #darkblue
+        deactivate
+        deactivate
+        deactivate
+        end
+
+        ViewProviderSketch -[#green]> DrawSketchDefaultHandler : **registerPressedKey** (bool pressed, int key)
+        activate DrawSketchDefaultHandler #lavender
+        alt#Gold #LightBlue if 'M' pressed
+        DrawSketchDefaultHandler -> ConstructionMethodMachine : iterateToNextConstructionMethod()
+        activate ConstructionMethodMachine #lightgreen
+        deactivate
+        deactivate
+        end
+        @enduml
+        \end{plantuml}
+    \end{figure}
+
+    Moving the mouse triggers a function used to update the DSH internal state with the new mouse information, generate a curve for drawing and having it draw by \ViewProviderSketch{}.
+
+    Left button response has been automated to advance to next state of the state machine on each click. This behaviour can, of course, be overriden (by overloading onButtonPressed) when appropriate. It is, however, the expected behaviour in most DSHs written so far. Arriving to the End state of the state machine. This may be by advancing on mouse click, or by any other input causing to switch to that mode. The latter provides support for non-mouse input.
+
+    Finishing a command has been split into meaningful units and made into a non-virtual interface to support automation. This finish() function, aside from the housekeeping, (1) triggers functions intended to execute the necessary Python commands, (2) generate any detected autoconstraint \emph{without} adding it, (3) offer the opportunity to perform changes before adding the autoconstraints to the DSH, (4) create the autoconstraints and graciously finish or continue a new operation.
+
+    The reader has surely realised the fine grained design put into the generation and creation of autoconstraints. The ultimate goal is to avoid any addition of redundant autoconstraints, while still enable additional input to be considered before addition. This will be better understood when discussing the problems arising from the introduction of additional input means.
+
+    A last reference is due to the change of construction method, which is currently hard-coded to the 'M' key. Making it configurable is feasible. However, there is no support for it yet.
+
+    \subsection{Advanced Drawing and Python command generation}
+
+
+
+    \subsection{Advanced Solver Support}
+
+\end{document}
+
+
